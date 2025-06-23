@@ -6,6 +6,13 @@ const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
 
+// Create attachments directory if it doesn't exist
+const attachmentsDir = path.join(__dirname, 'attachments');
+if (!fs.existsSync(attachmentsDir)) {
+    fs.mkdirSync(attachmentsDir, { recursive: true });
+    console.log('📁 Created attachments directory');
+}
+
 // Database setup
 const db = new Database('email_tracker.db');
 
@@ -60,6 +67,13 @@ const config = {
     }
 };
 
+// Function to check if file is PDF
+function isPdfFile(filename) {
+    if (!filename) return false;
+    const extension = path.extname(filename).toLowerCase();
+    return extension === '.pdf';
+}
+
 async function checkForNewAttachments() {
     try {
         const connection = await imaps.connect(config);
@@ -69,9 +83,21 @@ async function checkForNewAttachments() {
         let searchCriteria = ['ALL'];
 
         // If we have a last processed message, search for messages after that date
-        if (lastProcessed.last_processed_date) {
-            const lastDate = new Date(lastProcessed.last_processed_date);
-            searchCriteria = ['SINCE', lastDate];
+        if (lastProcessed.last_processed_date && lastProcessed.last_processed_date !== '') {
+            try {
+                const lastDate = new Date(lastProcessed.last_processed_date);
+                // Format date as DD-MMM-YYYY for IMAP SINCE search
+                const formattedDate = lastDate.toLocaleDateString('en-US', {
+                    day: '2-digit',
+                    month: 'short',
+                    year: 'numeric'
+                });
+                searchCriteria = ['SINCE', formattedDate];
+                console.log(`🔍 Searching for messages since: ${formattedDate}`);
+            } catch (dateError) {
+                console.log('⚠️ Invalid date format, searching all messages');
+                searchCriteria = ['ALL'];
+            }
         }
 
         const fetchOptions = {
@@ -110,7 +136,9 @@ async function checkForNewAttachments() {
 
             const parts = imaps.getParts(msg.attributes.struct);
             const attachmentParts = parts.filter(part =>
-                part.disposition && part.disposition.type.toUpperCase() === 'ATTACHMENT'
+                part.disposition &&
+                part.disposition.type.toUpperCase() === 'ATTACHMENT' &&
+                isPdfFile(part.disposition.params.filename)
             );
 
             if (attachmentParts.length > 0) {
@@ -119,12 +147,18 @@ async function checkForNewAttachments() {
                 for (let i = 0; i < attachmentParts.length; i++) {
                     const attachmentPart = attachmentParts[i];
                     const partData = await connection.getPartData(msg, attachmentPart);
-                    const filename = attachmentPart.disposition.params.filename || `attachment-${i}.bin`;
+                    const filename = attachmentPart.disposition.params.filename || `attachment-${i}.pdf`;
+
+                    // Ensure filename has .pdf extension
+                    if (!filename.toLowerCase().endsWith('.pdf')) {
+                        continue; // Skip non-PDF files
+                    }
+
                     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-                    const savePath = path.join(__dirname, `attachment-${timestamp}-${filename}`);
+                    const savePath = path.join(attachmentsDir, `attachment-${timestamp}-${filename}`);
 
                     fs.writeFileSync(savePath, partData);
-                    console.log(`✅ Attachment saved: ${savePath}`);
+                    console.log(`✅ PDF saved: ${savePath}`);
                 }
 
                 processedCount++;
@@ -138,14 +172,35 @@ async function checkForNewAttachments() {
 
         if (processedCount > 0) {
             updateLastProcessedEmail(lastMessageId, lastMessageUid, lastProcessedDate);
-            console.log(`📊 Processed ${processedCount} messages with attachments`);
+            console.log(`📊 Processed ${processedCount} messages with PDF attachments`);
         } else {
-            console.log('No new messages with attachments found.');
+            console.log('No new messages with PDF attachments found.');
         }
 
         connection.end();
     } catch (error) {
         console.error('❌ Error:', error.message);
+        // If there's a search error, try with ALL messages as fallback
+        if (error.message.includes('search option')) {
+            console.log('🔄 Retrying with ALL messages search...');
+            try {
+                const connection = await imaps.connect(config);
+                await connection.openBox('INBOX');
+
+                const fetchOptions = {
+                    bodies: ['HEADER', ''],
+                    struct: true,
+                    markSeen: false
+                };
+
+                const messages = await connection.search(['ALL'], fetchOptions);
+                console.log(`📧 Found ${messages.length} total messages (using ALL search)`);
+
+                connection.end();
+            } catch (retryError) {
+                console.error('❌ Retry failed:', retryError.message);
+            }
+        }
     }
 }
 
@@ -191,8 +246,9 @@ async function resetToLatestEmail() {
 
 // Main monitoring function
 async function startMonitoring(checkInterval = 30000) { // 30 seconds default
-    console.log('🚀 Starting email attachment monitor...');
+    console.log('🚀 Starting PDF email attachment monitor...');
     console.log(`⏰ Check interval: ${checkInterval / 1000} seconds`);
+    console.log(`📁 PDFs will be saved to: ${attachmentsDir}`);
 
     // Initial check
     await checkForNewAttachments();

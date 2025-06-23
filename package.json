@@ -7,20 +7,20 @@
     "start:fast": "node imap-sync.js --interval=10",
     "start:slow": "node imap-sync.js --interval=300",
     "reset": "node imap-sync.js --reset",
-    "pull": "node imappull.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
     "email",
     "imap",
     "gmail",
+    "pdf",
     "attachments",
     "monitor",
     "sync"
   ],
   "author": "",
   "license": "ISC",
-  "description": "Email attachment monitor with continuous synchronization",
+  "description": "PDF email attachment monitor with continuous synchronization",
   "dependencies": {
     "dotenv": "^16.5.0",
     "imap-simple": "^5.1.0",
