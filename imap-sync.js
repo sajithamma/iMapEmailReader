@@ -74,6 +74,30 @@ function isPdfFile(filename) {
     return extension === '.pdf';
 }
 
+// Function to sanitize filename for safe file system operations
+function sanitizeFilename(filename) {
+    if (!filename) return 'attachment.pdf';
+
+    // Remove or replace invalid characters for file systems
+    let sanitized = filename
+        .replace(/[<>:"/\\|?*]/g, '_')  // Replace invalid characters with underscore
+        .replace(/\s+/g, '_')           // Replace spaces with underscore
+        .replace(/__+/g, '_')           // Replace multiple underscores with single
+        .replace(/^_+|_+$/g, '');       // Remove leading/trailing underscores
+
+    // Ensure it ends with .pdf
+    if (!sanitized.toLowerCase().endsWith('.pdf')) {
+        sanitized += '.pdf';
+    }
+
+    // If filename is empty after sanitization, use default
+    if (!sanitized || sanitized === '.pdf') {
+        sanitized = 'attachment.pdf';
+    }
+
+    return sanitized;
+}
+
 async function checkForNewAttachments() {
     try {
         const connection = await imaps.connect(config);
@@ -82,20 +106,20 @@ async function checkForNewAttachments() {
         const lastProcessed = getLastProcessedEmail();
         let searchCriteria = ['ALL'];
 
-        // If we have a last processed message, search for messages after that date
-        if (lastProcessed.last_processed_date && lastProcessed.last_processed_date !== '') {
+        // If we have a last processed message UID, search for messages with higher UID
+        if (lastProcessed.last_message_uid && lastProcessed.last_message_uid !== '') {
             try {
-                const lastDate = new Date(lastProcessed.last_processed_date);
-                // Format date as DD-MMM-YYYY for IMAP SINCE search
-                const formattedDate = lastDate.toLocaleDateString('en-US', {
-                    day: '2-digit',
-                    month: 'short',
-                    year: 'numeric'
-                });
-                searchCriteria = ['SINCE', formattedDate];
-                console.log(`🔍 Searching for messages since: ${formattedDate}`);
-            } catch (dateError) {
-                console.log('⚠️ Invalid date format, searching all messages');
+                const lastUid = parseInt(lastProcessed.last_message_uid);
+                if (!isNaN(lastUid)) {
+                    // Use a simpler approach - search all and filter by UID in code
+                    searchCriteria = ['ALL'];
+                    console.log(`🔍 Searching all messages, will filter by UID > ${lastUid}`);
+                } else {
+                    console.log('⚠️ Invalid UID format, searching all messages');
+                    searchCriteria = ['ALL'];
+                }
+            } catch (uidError) {
+                console.log('⚠️ UID search error, searching all messages');
                 searchCriteria = ['ALL'];
             }
         }
@@ -114,8 +138,23 @@ async function checkForNewAttachments() {
             return;
         }
 
+        console.log(`📧 Found ${messages.length} messages to check`);
+
+        // Filter messages by UID if we have a last processed UID
+        let filteredMessages = messages;
+        if (lastProcessed.last_message_uid && lastProcessed.last_message_uid !== '') {
+            const lastUid = parseInt(lastProcessed.last_message_uid);
+            if (!isNaN(lastUid)) {
+                filteredMessages = messages.filter(msg => {
+                    const msgUid = parseInt(msg.attributes.uid);
+                    return !isNaN(msgUid) && msgUid > lastUid;
+                });
+                console.log(`📧 Filtered to ${filteredMessages.length} new messages (UID > ${lastUid})`);
+            }
+        }
+
         // Sort messages by date ascending (oldest first to process in order)
-        const sortedMessages = messages.sort(
+        const sortedMessages = filteredMessages.sort(
             (a, b) => a.attributes.date - b.attributes.date
         );
 
@@ -147,15 +186,17 @@ async function checkForNewAttachments() {
                 for (let i = 0; i < attachmentParts.length; i++) {
                     const attachmentPart = attachmentParts[i];
                     const partData = await connection.getPartData(msg, attachmentPart);
-                    const filename = attachmentPart.disposition.params.filename || `attachment-${i}.pdf`;
+                    const originalFilename = attachmentPart.disposition.params.filename || `attachment-${i}.pdf`;
 
                     // Ensure filename has .pdf extension
-                    if (!filename.toLowerCase().endsWith('.pdf')) {
+                    if (!originalFilename.toLowerCase().endsWith('.pdf')) {
                         continue; // Skip non-PDF files
                     }
 
+                    // Sanitize the filename to remove invalid characters
+                    const sanitizedFilename = sanitizeFilename(originalFilename);
                     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-                    const savePath = path.join(attachmentsDir, `attachment-${timestamp}-${filename}`);
+                    const savePath = path.join(attachmentsDir, `attachment-${timestamp}-${sanitizedFilename}`);
 
                     fs.writeFileSync(savePath, partData);
                     console.log(`✅ PDF saved: ${savePath}`);
@@ -181,7 +222,7 @@ async function checkForNewAttachments() {
     } catch (error) {
         console.error('❌ Error:', error.message);
         // If there's a search error, try with ALL messages as fallback
-        if (error.message.includes('search option')) {
+        if (error.message.includes('search option') || error.message.includes('UID')) {
             console.log('🔄 Retrying with ALL messages search...');
             try {
                 const connection = await imaps.connect(config);
@@ -294,4 +335,4 @@ module.exports = {
     checkForNewAttachments,
     resetToLatestEmail,
     startMonitoring
-}; 
+};

@@ -3,3 +3,4 @@ node_modules
 attachments
 package-lock.json
 venv
+email_tracker.db
