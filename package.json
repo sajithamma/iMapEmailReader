@@ -1,19 +1,30 @@
 {
   "name": "adrakoman",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "imap-sync.js",
   "scripts": {
+    "start": "node imap-sync.js",
+    "start:fast": "node imap-sync.js --interval=10",
+    "start:slow": "node imap-sync.js --interval=300",
+    "reset": "node imap-sync.js --reset",
+    "pull": "node imappull.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
+  "keywords": [
+    "email",
+    "imap",
+    "gmail",
+    "attachments",
+    "monitor",
+    "sync"
+  ],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "Email attachment monitor with continuous synchronization",
   "dependencies": {
-    "better-sqlite3": "^12.0.0",
     "dotenv": "^16.5.0",
     "imap-simple": "^5.1.0",
     "mailparser": "^3.7.3",
-    "sqlite3": "^5.1.7"
+    "better-sqlite3": "^9.4.3"
   }
 }
